@@ -16,17 +16,18 @@ class Client:
         self.port = port
         self.team_name = 'Rak-Yossi!'
         self.server_address = None
-
-    def connect_to_server(self, offer_buffer_size=8):
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp_socketock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         self.udp_socket.bind(('', self.port))
+
+    def connect_to_server(self, offer_buffer_size = 9):
         message, address = self.udp_socket.recvfrom(offer_buffer_size)
         self.server_port = struct.unpack('IBH', message)[2]
-        self.server_address = address
-        logging.info('Received server details. Port: {0}, IP: {1}'.format(self.server_port, address))
+        self.server_address = address[0]
+        logging.info('Received server details. IP: {0}, Port: {1}.'.format(self.server_address, self.server_port))
         self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.tcp_socket.connect((address[0], address[1]))
-        logging.info('Establish TCP connection with: Port: {0}, IP: {1}'.format(self.server_port, self.server_address))
+        self.tcp_socket.connect((self.server_address, self.server_port))
+        logging.info('Establish TCP connection with IP: {0}, Port: {1}.'.format(self.server_address, self.server_port))
 
     def run(self):
         try:

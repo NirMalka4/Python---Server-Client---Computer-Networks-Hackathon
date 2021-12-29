@@ -15,10 +15,11 @@ class SelectorServer:
     def __init__(self, port):
 
         # create udp socket
-        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM | socket.SOCK_NONBLOCK)
+        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        #self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.udp_socket.bind(('', port))
         logging.info('Server up, listening on IP address: {0}'.format(self.udp_socket.getsockname()))
-        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
         # Create the main socket that accepts incoming connections and start
         # listening. The socket is nonblocking.
@@ -105,13 +106,13 @@ class SelectorServer:
     def close_connection(self, socket):
         try:
             fd = socket.fileno()
-            address = self.clients[fd][1]
-            logging.info('Closing connection to {0}'.format(address))
+            [_, client_name, address] = self.clients[fd]
+            logging.info('Closing connection with: {0}, at address: {1}'.format(client_name, address))
             del self.clients[fd]
             #self.selector.unregister(socket)
             socket.close()
         except:
-            logging.info('Error occurred during closing socket: {0}'.format(socket))
+            logging.info('Error occurred during closing connection with: {0}, at address: {1}'.format(client_name, address))
 
     def run_offer(self, dest_port):
         if len(self.clients) < 2:
@@ -119,16 +120,18 @@ class SelectorServer:
             packer = struct.Struct('IBH')
             data = packer.pack(0xabcddcba, 2, self.port)
             self.udp_socket.sendto(data, (BROADCAST, dest_port))  # send offer to all clients each sec
+            # for debug
+            #self.udp_socket.sendto(data, (BROADCAST, 13118))  # send offer to all clients each sec
 
     def generate_winning_summary(self, winner, answer):
         return 'Game over!\nThe correct answer was: {0}.\n\nCongratulation to the winner: {1}\n\n'.format(answer,
-                                                                                                          winner).encode()
+                                                                                                          winner)
 
     def generate_draw_summary(self, answer):
-        return 'Game over!\nThe correct answer was: {0}.\n'.format(answer).encode()
+        return 'Game over!\nThe correct answer was: {0}.\n'.format(answer)
 
     def generate_welcome_message(self, p1, p2, riddle):
-        return 'Welcome to Quasi Team\nPlayer1: {0}\nPlayer2: {1}\n=============\n{2}'.format(p1, p2, riddle).encode()
+        return 'Welcome to Quasi Team\nPlayer1: {0}\nPlayer2: {1}\n=============\n{2}'.format(p1, p2, riddle)
 
     def generate_riddle(self):
         riddle = self.riddles[self.riddle_index]
@@ -140,7 +143,9 @@ class SelectorServer:
         [p1_socket, p1_addr, p1_name] = self.clients[fd1]
         [p2_socket, p2_addr, p2_name] = self.clients[fd2]
         welcome_msg = self.generate_welcome_message(p1_name, p2_name, riddle)
+        logging.info('Send {0} to: {0}, {1}'.format(welcome_msg, p1_addr, p2_name))
         # 1. send welcome_msg to the player, start timer
+        welcome_msg = welcome_msg.encode()
         p1_socket.send(welcome_msg)
         p2_socket.send(welcome_msg)
         # 2. if answer has been received within timer bounds - verify answer, generate summary, send summary
@@ -150,8 +155,11 @@ class SelectorServer:
             if len(rlist) != 0:
                 first_responder_fd = rlist[0]
                 first_responder_socket = p1_socket if first_responder_fd == fd1 else p2_socket
-                data = first_responder_socket.recv(1024)
-                is_correct_answer = int(repr(data)[2:-1]) == riddle_answer
+                # get data from first responder, convert it to int.
+                answer = first_responder_socket.recv(1024)
+                answer = int(repr(answer)[2:-1])
+                is_correct_answer = answer == riddle_answer
+                logging.info('First responder: {0}, answered: {1}.'.format(self.clients[first_responder_fd][2], answer))
                 msg = self.generate_winning_summary(p1_name,
                                                     riddle_answer) if is_correct_answer and first_responder_fd == fd1 else self.generate_winning_summary(
                     p2_name, riddle_answer)
@@ -159,13 +167,19 @@ class SelectorServer:
                 msg = self.generate_draw_summary(riddle_answer)
         except:
             logging.info(
-                'Fail to receive data from: {0}'.format(p1_addr if first_responder_socket == p1_socket else p2_addr))
+                'Fail to receive data from: {0}, address:'.format(self.clients[first_responder_fd][2], self.clients[first_responder_fd][1]))
         finally:  # send draw summary if: illegal argument has been received or no answer was received in 10 secs
             msg = self.generate_draw_summary(riddle_answer) if msg is None else msg
-            p1_socket.send(msg)
-            p2_socket.send(msg)
-            self.close_connection(p1_socket)
-            self.close_connection(p2_socket)
+            logging.info('Send {0} to: {1}, {2}.'.format(msg, p1_name, p2_name))
+            try:
+                msg = msg.encode()
+                p1_socket.send(msg)
+                p2_socket.send(msg)
+            except:
+                logging.info('Fail to send summary to: {0}, {1}.'.format(p1_name, p2_name))
+            finally:
+                self.close_connection(p1_socket)
+                self.close_connection(p2_socket)
 
     def on_read(self, socket, mask):
         # This is a handler for peer sockets - it's called when there's new
@@ -197,7 +211,7 @@ class SelectorServer:
             else:
                 self.close_connection(socket)
         except:
-            logging.info('Fail to receive data:{0} from: {1}'.format(data, socket))
+            logging.info('Fail to receive the following data:{0} from: {1}'.format(data, address))
             self.close_connection(socket)
 
     def serve_forever(self):
