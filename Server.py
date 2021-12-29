@@ -16,17 +16,16 @@ class SelectorServer:
 
         # create udp socket
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        #self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.udp_socket.bind(('', port))
         logging.info('Server up, listening on IP address: {0}'.format(self.udp_socket.getsockname()))
 
         # Create the main socket that accepts incoming connections and start
         # listening. The socket is nonblocking.
         self.port = port
-        self.main_socket = socket.socket()
+        self.main_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.main_socket.bind(('', port))
-        self.main_socket.listen(100)
+        self.main_socket.listen(2)
         self.main_socket.setblocking(False)
 
         # Create the selector object that will dispatch events. Register
@@ -90,29 +89,34 @@ class SelectorServer:
     def on_accept(self, sock, mask):
         # This is a handler for the main_socket which is now listening, so we
         # know it's ready to accept a new connection.
-        if len(self.clients) < 2:
-            client_socket, address = self.main_socket.accept()
-            logging.info('Accepted connection from {0}'.format(address))
-            client_socket.setblocking(False)
-            fd = client_socket.fileno()
-            # add new client to either clients or queue #
-            self.clients[fd] = [client_socket, address, None]
-            self.queue.append(fd)
-            # Register interest in read events on the new socket, dispatching to
-            # self.on_read
-            self.selector.register(fileobj=client_socket, events=selectors.EVENT_READ,
-                                   data=self.on_read)
+        try:
+            if len(self.clients) < 2:
+                client_socket, address = self.main_socket.accept()
+                logging.info('Accepted connection from {0}'.format(address))
+                client_socket.setblocking(False)
+                fd = client_socket.fileno()
+                # add new client to either clients or queue #
+                self.clients[fd] = [client_socket, address, None]
+                self.queue.append(fd)
+                # Register interest in read events on the new socket, dispatching to
+                # self.on_read
+                self.selector.register(fileobj=client_socket, events=selectors.EVENT_READ,
+                                       data=self.on_read)
+        except:
+            logging.info('Server failed to connect to: {0}'.format(socket))
 
     def close_connection(self, socket):
+        client_name, address = None, None
         try:
             fd = socket.fileno()
             [_, client_name, address] = self.clients[fd]
             logging.info('Closing connection with: {0}, at address: {1}'.format(client_name, address))
             del self.clients[fd]
-            #self.selector.unregister(socket)
+            # self.selector.unregister(socket)
             socket.close()
         except:
-            logging.info('Error occurred during closing connection with: {0}, at address: {1}'.format(client_name, address))
+            logging.info(
+                'Error occurred during closing connection with: {0}, at address: {1}'.format(client_name, address))
 
     def run_offer(self, dest_port):
         if len(self.clients) < 2:
@@ -121,7 +125,7 @@ class SelectorServer:
             data = packer.pack(0xabcddcba, 2, self.port)
             self.udp_socket.sendto(data, (BROADCAST, dest_port))  # send offer to all clients each sec
             # for debug
-            #self.udp_socket.sendto(data, (BROADCAST, 13118))  # send offer to all clients each sec
+            # self.udp_socket.sendto(data, (BROADCAST, 13118))  # send offer to all clients each sec
 
     def generate_winning_summary(self, winner, answer):
         return 'Game over!\nThe correct answer was: {0}.\n\nCongratulation to the winner: {1}\n\n'.format(answer,
@@ -167,7 +171,7 @@ class SelectorServer:
                 msg = self.generate_draw_summary(riddle_answer)
         except:
             logging.info(
-                'Fail to receive data from: {0}, address:'.format(self.clients[first_responder_fd][2], self.clients[first_responder_fd][1]))
+                'Fail to receive data from: {0}, {1}'.format(p1_name, p2_name))
         finally:  # send draw summary if: illegal argument has been received or no answer was received in 10 secs
             msg = self.generate_draw_summary(riddle_answer) if msg is None else msg
             logging.info('Send {0} to: {1}, {2}.'.format(msg, p1_name, p2_name))
@@ -185,6 +189,7 @@ class SelectorServer:
         # This is a handler for peer sockets - it's called when there's new
         # data.
         data = None
+        address = None
         try:
             data = socket.recv(1024)
             if mask & selectors.EVENT_READ:
@@ -196,6 +201,8 @@ class SelectorServer:
                     self.clients[fd] = [socket, address, None]
                 elif self.clients[fd][2] is None:
                     self.clients[fd][2] = data
+                else:
+                    self.close_connection(socket)
                 if len(self.queue) >= 2:
                     # 1. pop first two rivals from queue
                     fd1 = self.queue.pop()
@@ -220,7 +227,7 @@ class SelectorServer:
         while True:
             # Wait until some registered socket becomes ready. This will block
             # for 200 ms.
-            events = self.selector.select(timeout=1)
+            events = self.selector.select(timeout=2)
             threading.Thread(target=self.run_offer, args=(13117,)).start()
 
             # For each new event, dispatch to its handler
@@ -239,5 +246,5 @@ class SelectorServer:
 
 if __name__ == '__main__':
     logging.info('Create Server')
-    server = SelectorServer(port=2114)
+    server = SelectorServer(port=2112)
     server.serve_forever()
