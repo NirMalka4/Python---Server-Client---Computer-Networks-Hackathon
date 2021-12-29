@@ -34,7 +34,7 @@ class Client:
         try:
             self.tcp_socket.send(self.team_name.encode())
             welcome_msg = repr(self.tcp_socket.recv(1024))[2:-1].replace('\\n', '\n')
-            logging.info('Received from server{0}:\n{1}'.format(self.server_address ,welcome_msg))
+            logging.info('Received from server: {0}:\n{1}'.format(self.server_address ,welcome_msg))
             fd1, fd2 = self.tcp_socket.fileno(), sys.stdin.fileno()
             try:
                 rlist, wlist, xlist = select.select([fd1, fd2], [], [])
@@ -55,6 +55,7 @@ class Client:
             self.tcp_socket.close()
 
 if __name__ == '__main__':
+    logging.info('Create Client')
     PORT = 13117
     client = Client(PORT)
     client.run()
